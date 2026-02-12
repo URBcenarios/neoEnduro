@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neo Enduro: Wide Screen</title>
+    <title>Neo Enduro</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; touch-action: none; }
 
@@ -73,6 +73,24 @@
             background: linear-gradient(to bottom, #d32f2f, #8e0000);
             border-color: #ff6659;
         }
+        /* ... outros estilos ... */
+
+        /* Adicione isso para o texto piscar */
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+
+        .blink-text {
+            animation: blink 0.8s infinite;
+            font-size: 22px;
+            color: #fff;
+            margin-top: 50px;
+            font-weight: bold;
+            text-shadow: 0 0 10px #ff00de; /* Brilho neon */
+            pointer-events: none; /* Garante que o clique passe para a div */
+        }
 
         /* Screens */
         .overlay-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; z-index: 100; text-align: center; }
@@ -103,21 +121,29 @@
         </div>
     </div>
 
-    <div id="start-screen" class="overlay-screen">
-        <h1 style="color:#ffcc00">NEO ENDURO</h1>
-        <p>Pro Challenge Edition</p>
-        <p style="font-size: 12px; color: #aaa;">Chegue aos checkpoints para ganhar tempo.</p>
-        <button class="start-btn" onclick="startGame(true)">INICIAR CORRIDA</button>
-    </div>
+    <div id="start-screen" class="overlay-screen" onclick="startGame(true)" style="cursor: pointer;">
+            <h1 style="color:#ffcc00; font-size: 48px; margin-bottom: 10px;">NEO ENDURO</h1>
+            <p style="color: #00ffff; letter-spacing: 2px;">PRO CHALLENGE EDITION</p>
 
-    <div id="gameover-screen" class="overlay-screen hidden">
-        <h1>FIM DE JOGO</h1>
-        <p>Distância Total: <span id="final-score">0</span>km</p>
-        <p>Nível Alcançado: <span id="final-level">1</span></p>
-        <button class="start-btn" onclick="startGame(false)">TENTAR NOVAMENTE</button>
-    </div>
+            <p style="font-size: 14px; color: #aaa; margin-top: 5px;">
+                Chegue aos checkpoints para ganhar tempo.<br>
+                Cuidado com o tráfego intenso.
+            </p>
 
-<script>
+            <div class="blink-text">TOQUE PARA INICIAR</div>
+        </div>
+
+        <div id="gameover-screen" class="overlay-screen hidden" onclick="startGame(false)" style="cursor: pointer;">
+            <h1 style="color: #ff0000; font-size: 48px;">FIM DE JOGO</h1>
+
+            <div style="border: 2px solid #fff; padding: 20px; margin: 20px; border-radius: 10px; background: rgba(255,255,255,0.1);">
+                <p style="font-size: 20px; margin: 5px;">Distância: <span id="final-score" style="color: #ffcc00;">0</span>km</p>
+                <p style="font-size: 20px; margin: 5px;">Nível: <span id="final-level" style="color: #00ff00;">1</span></p>
+            </div>
+
+            <div class="blink-text">TOQUE PARA TENTAR NOVAMENTE</div>
+        </div>
+    <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
@@ -129,7 +155,7 @@
 
         // --- Dificuldade ---
         let level = 1;
-        let baseCheckpointDist = 300000;
+        let baseCheckpointDist = 300000; // Distância base
         let currentCheckpointDist = baseCheckpointDist;
         let currentMaxSpeed = 12000;
 
@@ -149,14 +175,12 @@
         let keyLeft = false, keyRight = false, keyFaster = false;
 
         function resize() {
-            // Ajusta o canvas descontando o tamanho dos controles
             let controlsHeight = document.getElementById('controls').offsetHeight;
             canvas.width = document.getElementById('game-container').clientWidth;
             canvas.height = document.getElementById('game-container').clientHeight - controlsHeight;
             width = canvas.width; height = canvas.height;
         }
         window.addEventListener('resize', resize);
-        // Chamada inicial com delay para garantir carregamento do CSS
         setTimeout(resize, 100);
 
         // ================= HELPERS =================
@@ -197,19 +221,17 @@
             }
         }
 
-        // ================= SISTEMA DE TRÁFEGO DINÂMICO =================
-
+        // ================= SISTEMA DE TRÁFEGO =================
         function addTraffic(count) {
             const totalSegments = segments.length;
             for(let i=0; i<count; i++) {
-                // Velocidade base dos oponentes aumenta com o nível
-                let baseEnemySpeed = 3000 + (level * 200);
+                // Inimigos ficam mais rápidos a cada nível para dificultar ultrapassagens
+                let baseEnemySpeed = 3000 + (level * 300);
 
                 cars.push({
                     offset: (Math.random() * 1.6) - 0.8,
-                    // Spawna carros em posições aleatórias, mas evita spawnar muito perto do player visualmente
-                    z: (position + 5000 + Math.random() * (totalSegments * segmentLength)) % (totalSegments * segmentLength),
-                    speed: baseEnemySpeed + Math.random() * 5000,
+                    z: (position + 3000 + Math.random() * (totalSegments * segmentLength)) % (totalSegments * segmentLength),
+                    speed: baseEnemySpeed + Math.random() * 4000,
                     type: Math.floor(Math.random() * 4)
                 });
             }
@@ -249,14 +271,12 @@
             stars = [];
             for(let i=0; i<80; i++) stars.push({ x: Math.random(), y: Math.random() * 0.4, size: Math.random()*2 + 1 });
 
-            // Começa com tráfego leve (40 carros)
+            // HARDCORE START: Começa com 60 carros em vez de 40
             cars = [];
-            addTraffic(40);
+            addTraffic(60);
         }
 
         function saveGame() {
-            // Precisamos salvar o array de carros também para não resetar a dificuldade ao dar retry
-            // Mas para simplificar o retry, vamos apenas salvar os parâmetros numéricos
             savedState = { totalTime, distanceTraveled, nextCheckpoint, level, currentMaxSpeed, currentCheckpointDist, carCount: cars.length };
         }
 
@@ -264,18 +284,16 @@
             document.getElementById('start-screen').classList.add('hidden');
             document.getElementById('gameover-screen').classList.add('hidden');
 
-            // Se for reset total, recria a estrada e reseta tudo
             if (reset || !savedState) {
-                createRoad(); // Reseta tráfego para 40
+                createRoad();
                 level = 1; currentMaxSpeed = 12000; currentCheckpointDist = baseCheckpointDist; nextCheckpoint = currentCheckpointDist;
-                playerX = 0; speed = 0; position = 0; totalTime = 0; distanceTraveled = 0; timeLeft = 35; skyOffset = 0;
+                playerX = 0; speed = 0; position = 0; totalTime = 0; distanceTraveled = 0;
+                timeLeft = 35; // Começa com tempo apertado
+                skyOffset = 0;
             } else {
-                // Se for retry, restaura estado
-                // Nota: Não salvamos a posição exata dos carros, então recriamos o tráfego baseado na quantidade do nível
                 createRoad();
                 cars = [];
-                addTraffic(savedState.carCount); // Restaura quantidade de carros do nível que morreu
-
+                addTraffic(savedState.carCount);
                 level = savedState.level; currentMaxSpeed = savedState.currentMaxSpeed; currentCheckpointDist = savedState.currentCheckpointDist; nextCheckpoint = savedState.nextCheckpoint;
                 playerX = 0; speed = 0; position = 0; totalTime = savedState.totalTime; distanceTraveled = savedState.distanceTraveled; timeLeft = 30;
             }
@@ -430,20 +448,21 @@
                     // 1. AUMENTA VELOCIDADE DO JOGADOR
                     currentMaxSpeed += 500;
 
-                    // 2. INJETA MAIS TRÁFEGO (10 carros a cada nível)
-                    addTraffic(10);
+                    // 2. INJETA MUITO MAIS TRÁFEGO (20 carros a cada nível em vez de 10)
+                    addTraffic(20);
 
-                    // 3. AUMENTA DISTÂNCIA PARA O PRÓXIMO CHECKPOINT
-                    let addedDist = baseCheckpointDist * (1 + (level * 0.1));
+                    // 3. AUMENTA DISTÂNCIA (+15% em vez de 10%)
+                    let addedDist = baseCheckpointDist * (1 + (level * 0.15));
                     currentCheckpointDist = addedDist;
                     nextCheckpoint += currentCheckpointDist;
 
-                    // 4. TEMPO MAIS APERTADO
-                    // Calculamos o tempo necessário na velocidade máxima
+                    // 4. TEMPO CRUEL
+                    // Tempo necessário se você correr perfeito
                     let idealTime = addedDist / currentMaxSpeed;
-                    // A "margem de segurança" diminui conforme o nível sobe
-                    // Nível 1: +5s de margem. Nível 10: +0s de margem.
-                    let safetyMargin = Math.max(0, 5 - (level * 0.5));
+
+                    // Margem de segurança cai rápido. Nível 1 = +3s. Nível 3 = +1.2s. Nível 5 = +0s.
+                    // Se você bater no nível 3, provavelmente perderá o jogo.
+                    let safetyMargin = Math.max(0, 3 - (level * 0.6));
 
                     timeLeft += (idealTime + safetyMargin);
 
@@ -489,6 +508,6 @@
         addTouch('btn-right', ()=>keyRight=true, ()=>keyRight=false);
         addTouch('btn-accel', ()=>keyFaster=true, ()=>keyFaster=false);
 
-</script>
+    </script>
 </body>
 </html>
