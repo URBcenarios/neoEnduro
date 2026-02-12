@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neo Enduro: Final Stable</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; touch-action: none; }
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        canvas { display: block; width: 100%; height: 60%; background: #000; image-rendering: pixelated; }
+
+        /* UI */
+        .hud-text { position: absolute; color: #fff; font-weight: bold; text-shadow: 2px 2px #000; z-index: 10; pointer-events: none; }
+        #top-hud { top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; font-size: 18px; }
+        #timer { color: #ffcc00; font-size: 24px; }
+
+        #message-area { position: absolute; top: 30%; width: 100%; text-align: center; pointer-events: none; z-index: 20; }
+        .msg { font-size: 32px; font-weight: 900; text-shadow: 3px 3px #000; display: none; text-transform: uppercase; }
+        #msg-checkpoint { color: #00ff00; }
+        #msg-biome { color: #00ffff; font-size: 24px; margin-top: 10px; }
+
+        /* Controls */
+        #controls { flex: 1; background: #222; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; border-top: 4px solid #fff; }
+        .d-pad, .action-btn { display: flex; justify-content: center; align-items: center; gap: 20px; }
+        button { background: linear-gradient(to bottom, #444, #111); border: 2px solid #999; border-radius: 50%; color: white; font-size: 24px; width: 80px; height: 80px; box-shadow: 0 5px 0 #000; }
+        button:active { transform: translateY(5px); box-shadow: none; background: #555; }
+        .btn-rect { border-radius: 10px; width: 100%; height: 80px; font-size: 20px; font-weight: bold; background: linear-gradient(to bottom, #d32f2f, #8e0000); border-color: #ff6659; }
+
+        /* Screens */
+        .overlay-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; z-index: 100; text-align: center; }
+        .hidden { display: none !important; }
+        .start-btn { margin-top: 30px; padding: 15px 40px; font-size: 20px; background: #fff; color: #000; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="top-hud" class="hud-text">
+            <div>DIST: <span id="ui-score">0</span>km</div>
+            <div>TEMPO: <span id="timer">30</span></div>
+        </div>
+        <div id="message-area">
+            <div id="msg-checkpoint" class="msg">CHECKPOINT!</div>
+            <div id="msg-biome" class="msg">MUDANÇA DE CLIMA</div>
+        </div>
+        <canvas id="canvas"></canvas>
+        <div id="controls">
+            <div class="d-pad"><button id="btn-left">←</button><button id="btn-right">→</button></div>
+            <div class="action-btn"><button id="btn-accel" class="btn-rect">ACELERAR</button></div>
+        </div>
+    </div>
+
+    <div id="start-screen" class="overlay-screen">
+        <h1 style="color:#ffcc00">NEO ENDURO</h1>
+        <p>World Tour Edition</p>
+        <p style="font-size: 12px; color: #aaa;">Floresta -> Neve -> Deserto</p>
+        <button class="start-btn" onclick="startGame(true)">INICIAR</button>
+    </div>
+
+    <div id="gameover-screen" class="overlay-screen hidden">
+        <h1>FIM DE JOGO</h1>
+        <p>Distância Total: <span id="final-score">0</span>km</p>
+        <button class="start-btn" onclick="startGame(false)">CONTINUAR</button>
+    </div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- Configurações ---
+    let width, height;
+    const roadWidth = 2000;
+    const segmentLength = 200;
+    const cameraDepth = 0.84;
+    const checkpointInterval = 300000;
+    const maxSpeed = 12000; // Definido globalmente para evitar erros
+
+    // --- Estado do Jogo ---
+    let segments = [], cars = [], stars = [];
+    let playerX = 0, position = 0, speed = 0, distanceTraveled = 0;
+    let isRunning = false, timeLeft = 0, totalTime = 0;
+    let nextCheckpoint = checkpointInterval;
+    let savedState = null;
+
+    // --- Biomas e Ambiente ---
+    let currentBiome = 'NORMAL';
+    let skyOffset = 0; // Vai de 0 a 1
+    let currentSkyColor = [135, 206, 235];
+
+    // Input
+    let keyLeft = false, keyRight = false, keyFaster = false;
+
+    function resize() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+        width = canvas.width; height = canvas.height;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ================= HELPER FUNCTIONS =================
+
+    function lerp(start, end, t) { return start * (1 - t) + end * t; }
+    function lerpColor(c1, c2, t) {
+        return [ Math.round(lerp(c1[0],c2[0],t)), Math.round(lerp(c1[1],c2[1],t)), Math.round(lerp(c1[2],c2[2],t)) ];
+    }
+    function rgb(c) { return `rgb(${c[0]},${c[1]},${c[2]})`; }
+
+    // ================= LÓGICA DE AMBIENTE =================
+
+    function updateEnvironment(dt) {
+        // --- 1. CICLO DIA / NOITE (120s loop) ---
+        let cycleTime = totalTime % 120;
+        let cDay = [135, 206, 235];
+        let cOrange = [200, 80, 20];
+        let cPurple = [60, 20, 80];
+        let cBlack = [5, 5, 15];
+        let cNavy = [0, 0, 80];
+
+        if (cycleTime < 30) currentSkyColor = cDay;
+        else if (cycleTime < 60) {
+            let t = (cycleTime - 30) / 30;
+            if (t < 0.33) currentSkyColor = lerpColor(cDay, cOrange, t*3);
+            else if (t < 0.66) currentSkyColor = lerpColor(cOrange, cPurple, (t-0.33)*3);
+            else currentSkyColor = lerpColor(cPurple, cBlack, (t-0.66)*3);
+        } else if (cycleTime < 90) currentSkyColor = cBlack;
+        else {
+            let t = (cycleTime - 90) / 30;
+            currentSkyColor = lerpColor(cNavy, cDay, t);
+        }
+
+        // --- 2. CICLO DE BIOMAS (960s loop) ---
+        // 0-240: Normal, 240-480: Neve, 480-720: Normal, 720-960: Deserto
+        let biomeTime = totalTime % 960;
+        let prevBiome = currentBiome;
+
+        if (biomeTime < 240) currentBiome = 'NORMAL';
+        else if (biomeTime < 480) currentBiome = 'SNOW';
+        else if (biomeTime < 720) currentBiome = 'NORMAL';
+        else currentBiome = 'DESERT';
+
+        // Aviso visual
+        if(prevBiome !== currentBiome) {
+            let el = document.getElementById('msg-biome');
+            el.innerText = currentBiome === 'SNOW' ? "ENTRANDO NA NEVE" : (currentBiome === 'DESERT' ? "ENTRANDO NO DESERTO" : "VOLTANDO À FLORESTA");
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 3000);
+        }
+    }
+
+    // ================= GAMEPLAY =================
+
+    function createRoad() {
+        segments = [];
+        const totalSegments = 3000;
+        for (let n = 0; n < totalSegments; n++) {
+            segments.push({
+                index: n,
+                p1: { world: { z: n * segmentLength }, camera: {}, screen: {} },
+                p2: { world: { z: (n + 1) * segmentLength }, camera: {}, screen: {} },
+                curve: Math.sin(n/100)*2 + Math.sin(n/20)*4,
+                color: Math.floor(n / 3) % 2 ? { r: 100, g: 100, b: 100 } : { r: 90, g: 90, b: 90 }
+            });
+        }
+
+        // Estrelas (posições fixas relativas, de 0 a 1)
+        stars = [];
+        for(let i=0; i<80; i++) stars.push({ x: Math.random(), y: Math.random() * 0.4, size: Math.random()*2 + 1 });
+
+        cars = [];
+        for(let i=0; i<50; i++) {
+            cars.push({
+                offset: (Math.random() * 1.6) - 0.8,
+                z: Math.random() * totalSegments * segmentLength,
+                speed: 3000 + Math.random() * 7000,
+                type: Math.floor(Math.random() * 4)
+            });
+        }
+    }
+
+    function saveGame() {
+        savedState = { totalTime, distanceTraveled, nextCheckpoint, currentBiome };
+    }
+
+    function startGame(reset) {
+        document.getElementById('start-screen').classList.add('hidden');
+        document.getElementById('gameover-screen').classList.add('hidden');
+        createRoad();
+
+        if (reset || !savedState) {
+            playerX = 0; speed = 0; position = 0;
+            totalTime = 0; distanceTraveled = 0; timeLeft = 45;
+            nextCheckpoint = checkpointInterval;
+            skyOffset = 0;
+        } else {
+            playerX = 0; speed = 0; position = 0;
+            totalTime = savedState.totalTime;
+            distanceTraveled = savedState.distanceTraveled;
+            nextCheckpoint = savedState.nextCheckpoint;
+            timeLeft = 35;
+        }
+        isRunning = true;
+        lastTime = performance.now();
+        requestAnimationFrame(loop);
+    }
+
+    // ================= RENDER =================
+
+    function project(p, camX, camY, camZ, camDepth, w, h, roadW) {
+        p.camera.x = (p.world.x || 0) - camX;
+        p.camera.y = (p.world.y || 0) - camY;
+        p.camera.z = p.world.z - camZ;
+        p.screen.scale = camDepth / p.camera.z;
+        p.screen.x = Math.round((w / 2) + (p.screen.scale * p.camera.x * w / 2));
+        p.screen.y = Math.round((h / 2) - (p.screen.scale * p.camera.y * h / 2));
+        p.screen.w = Math.round((p.screen.scale * roadW * w / 2));
+    }
+
+    function drawPoly(ctx, x1, y1, w1, x2, y2, w2, color) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x1-w1, y1); ctx.lineTo(x2-w2, y2); ctx.lineTo(x2+w2, y2); ctx.lineTo(x1+w1, y1);
+        ctx.closePath(); ctx.fill();
+    }
+
+    function drawCar(ctx, x, y, w, h, isPlayer, type) {
+        let main = isPlayer ? '#d00' : (type==0?'#00d':type==1?'#080':type==2?'#d80':'#555');
+        let top = isPlayer ? '#a00' : main;
+
+        // Sombra
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x-w/2+4, y-h*0.1, w, h*0.1);
+
+        // Pneus
+        ctx.fillStyle = '#111';
+        let tw = w*0.18; let th = h*0.4;
+        ctx.fillRect(x-w/2, y-h*0.4, tw, th);
+        ctx.fillRect(x+w/2-tw, y-h*0.4, tw, th);
+
+        // Chassis
+        ctx.fillStyle = main; ctx.fillRect(x-w/2, y-h*0.5, w, h*0.5);
+
+        // Cabine
+        ctx.fillStyle = top;
+        let cw = w * 0.7;
+        ctx.fillRect(x-cw/2, y-h*0.9, cw, h*0.4);
+
+        // Vidro
+        ctx.fillStyle = (currentBiome === 'SNOW') ? '#e0ffff' : '#87CEFA';
+        ctx.fillRect(x-cw/2+2, y-h*0.85, cw-4, h*0.25);
+
+        // Luzes
+        if(!isPlayer) {
+            ctx.fillStyle = '#ff0';
+            ctx.fillRect(x-w/2+2, y-h*0.35, w*0.15, h*0.15);
+            ctx.fillRect(x+w/2-w*0.15-2, y-h*0.35, w*0.15, h*0.15);
+        }
+    }
+
+    function getBiomeColors(biome, lightLevel) {
+        let grass, road, mountain;
+        if (biome === 'SNOW') {
+            grass = [240, 240, 255]; road = [150, 150, 160]; mountain = [200, 200, 220];
+        } else if (biome === 'DESERT') {
+            grass = [210, 180, 100]; road = [120, 100, 80]; mountain = [160, 100, 60];
+        } else {
+            grass = [16, 85, 16]; road = [100, 100, 100]; mountain = [34, 139, 34];
+        }
+        let factor = Math.max(0.15, lightLevel);
+        return {
+            grass: `rgb(${grass[0]*factor}, ${grass[1]*factor}, ${grass[2]*factor})`,
+            roadBase: road,
+            mountain: `rgb(${mountain[0]*factor}, ${mountain[1]*factor}, ${mountain[2]*factor})`,
+            rumbleLight: biome==='SNOW' ? '#aaa' : '#fff',
+            rumbleDark:  biome==='SNOW' ? '#f00' : '#c00'
+        };
+    }
+
+    function render() {
+        let lightLevel = (currentSkyColor[0] + currentSkyColor[1] + currentSkyColor[2]) / 765;
+        let palette = getBiomeColors(currentBiome, lightLevel);
+
+        ctx.fillStyle = rgb(currentSkyColor);
+        ctx.fillRect(0, 0, width, height);
+
+        // --- ESTRELAS (Camada Traseira) ---
+        if (lightLevel < 0.4) {
+            ctx.fillStyle = '#fff';
+            stars.forEach(s => {
+                // A posição X é relativa à largura da tela e ao skyOffset
+                // (s.x vai de 0 a 1)
+                let sx = (s.x + skyOffset) * width;
+
+                // Loop
+                if (sx > width) sx -= width;
+                if (sx < 0) sx += width;
+
+                ctx.fillRect(sx, s.y * height, s.size, s.size);
+            });
+        }
+
+        // --- MONTANHAS (Bloco Sólido Suave) ---
+        ctx.fillStyle = palette.mountain;
+
+        // Desenhamos 3 cópias para garantir o loop sem buracos
+        for(let i = -1; i <= 1; i++) {
+            let startX = (i + skyOffset) * width;
+
+            // Otimização: se está fora da tela, não desenha
+            if (startX > width || startX + width < 0) continue;
+
+            ctx.beginPath();
+            ctx.moveTo(startX, height/2);
+            // Desenho do "skyline" da montanha
+            ctx.lineTo(startX + width * 0.15, height/2 - height * 0.20);
+            ctx.lineTo(startX + width * 0.30, height/2 - height * 0.05);
+            ctx.lineTo(startX + width * 0.55, height/2 - height * 0.30);
+            ctx.lineTo(startX + width * 0.75, height/2 - height * 0.10);
+            ctx.lineTo(startX + width * 0.90, height/2 - height * 0.15);
+            ctx.lineTo(startX + width, height/2);
+            ctx.fill();
+        }
+
+        // --- Renderização da Estrada ---
+        let startPos = Math.floor(position / segmentLength);
+        let maxy = height;
+        let cpZ = nextCheckpoint - position;
+        if (cpZ < 0) cpZ += segments.length * segmentLength;
+
+        for (let n = startPos; n < startPos + 300; n++) {
+            let l = segments[n % segments.length];
+            project(l.p1, (playerX * roadWidth) - l.curve, 1000, position - (l.index < startPos ? segments.length * segmentLength : 0), cameraDepth, width, height, roadWidth);
+            project(l.p2, (playerX * roadWidth) - l.curve, 1000, position - (l.index < startPos ? segments.length * segmentLength : 0), cameraDepth, width, height, roadWidth);
+
+            if (l.p1.camera.z <= cameraDepth || l.p2.screen.y >= maxy || l.p2.screen.y >= l.p1.screen.y) continue;
+
+            drawPoly(ctx, 0, l.p2.screen.y, width, 0, l.p1.screen.y, width, palette.grass);
+            let rumble = l.index % 6 < 3 ? palette.rumbleLight : palette.rumbleDark;
+            let rC = palette.roadBase;
+            let shade = (Math.floor(l.index/3)%2) ? 1 : 0.9;
+            let roadColor = `rgb(${rC[0]*shade*lightLevel}, ${rC[1]*shade*lightLevel}, ${rC[2]*shade*lightLevel})`;
+
+            drawPoly(ctx, l.p1.screen.x, l.p1.screen.y, l.p1.screen.w * 1.2, l.p2.screen.x, l.p2.screen.y, l.p2.screen.w * 1.2, rumble);
+            drawPoly(ctx, l.p1.screen.x, l.p1.screen.y, l.p1.screen.w, l.p2.screen.x, l.p2.screen.y, l.p2.screen.w, roadColor);
+
+            if (Math.abs(l.p1.camera.z - cpZ) < segmentLength) {
+                let checkColor = (Math.floor(Date.now()/100)%2) ? '#fff' : '#000';
+                drawPoly(ctx, l.p1.screen.x, l.p1.screen.y, l.p1.screen.w, l.p2.screen.x, l.p2.screen.y, l.p2.screen.w, checkColor);
+                let scale = l.p1.screen.scale;
+                let px = l.p1.screen.x + (scale * 2500 * width/2);
+                let py = l.p1.screen.y - (scale * 3000 * height/2);
+                ctx.fillStyle = '#0f0';
+                ctx.fillRect(px, py, 20 * scale * width, 100 * scale * height);
+                ctx.fillRect(px - 60*scale*width, py, 80*scale*width, 40*scale*height);
+            }
+            maxy = l.p2.screen.y;
+        }
+
+        // --- Renderização dos Sprites (Carros) ---
+        let renderList = [];
+        cars.forEach(car => {
+            let cz = car.z - position;
+            if (cz < 0) cz += segments.length * segmentLength;
+
+            if (cz > cameraDepth && cz < 300 * segmentLength) {
+                let scale = cameraDepth / cz;
+                let sx = Math.round((width / 2) + (scale * ((car.offset * roadWidth) - (playerX * roadWidth)) * width / 2));
+                // Câmera está a 1000 de altura
+                let sy = Math.round((height / 2) + (scale * 1000 * height / 2));
+
+                let sw = scale * roadWidth * width / 2 * 0.25;
+                renderList.push({ z: cz, sx: sx, sy: sy, sw: sw, type: car.type });
+            }
+        });
+
+        renderList.sort((a, b) => b.z - a.z);
+
+        renderList.forEach(item => {
+            if(item.sy > height/2) {
+                drawCar(ctx, item.sx, item.sy, item.sw, item.sw * 0.6, false, item.type);
+            }
+        });
+
+        drawCar(ctx, width/2, height-20, width*0.25, width*0.15, true, 0);
+    }
+
+    // ================= LOOP =================
+
+    let lastTime = 0;
+    function loop(time) {
+        let dt = Math.min(1, (time - lastTime) / 1000);
+        lastTime = time;
+
+        if (isRunning) {
+            totalTime += dt;
+            timeLeft -= dt;
+            updateEnvironment(dt);
+
+            if (timeLeft <= 0) {
+                isRunning = false;
+                document.getElementById('final-score').innerText = Math.floor(distanceTraveled / 1000);
+                document.getElementById('gameover-screen').classList.remove('hidden');
+            }
+
+            position += speed * dt;
+            distanceTraveled += speed * dt;
+            while(position >= segments.length*segmentLength) position -= segments.length*segmentLength;
+            while(position < 0) position += segments.length*segmentLength;
+
+            if (distanceTraveled >= nextCheckpoint) {
+                timeLeft += 45;
+                nextCheckpoint += checkpointInterval;
+                saveGame();
+                let msg = document.getElementById('msg-checkpoint');
+                msg.style.display = 'block';
+                setTimeout(()=>msg.style.display='none', 2000);
+            }
+
+            let curve = segments[Math.floor(position/segmentLength)%segments.length].curve;
+
+            // --- MOVIMENTO SUAVE DO CENÁRIO ---
+            if (speed > 0) {
+                // Fator 0.05 para movimento lento e pesado (montanhas distantes)
+                skyOffset -= curve * dt * (speed / maxSpeed) * 0.05;
+            }
+            // Loop do SkyOffset (0 a 1)
+            if (skyOffset > 1) skyOffset -= 1;
+            if (skyOffset < 0) skyOffset += 1;
+
+            let dx = dt * 2 * (speed / maxSpeed);
+            if (keyLeft) playerX -= dx;
+            if (keyRight) playerX += dx;
+
+            speed += keyFaster ? 100 : -50;
+            if ((playerX < -1 || playerX > 1) && speed > 2000) speed -= 200;
+            playerX = Math.max(-2, Math.min(2, playerX));
+            speed = Math.max(0, Math.min(maxSpeed, speed));
+
+            cars.forEach(c => {
+                c.z += c.speed * dt;
+                if(c.z >= segments.length*segmentLength) c.z -= segments.length*segmentLength;
+                let cz = c.z - position;
+                if(cz < 0) cz += segments.length*segmentLength;
+                if(cz < 300 && Math.abs(c.offset - playerX) < 0.20) speed = 100;
+            });
+
+            document.getElementById('ui-score').innerText = Math.floor(distanceTraveled/1000);
+            let tEl = document.getElementById('timer');
+            tEl.innerText = Math.ceil(timeLeft);
+            tEl.style.color = timeLeft < 10 ? '#f00' : '#fc0';
+        }
+        render();
+        requestAnimationFrame(loop);
+    }
+
+    const addTouch = (id, down, up) => {
+        const el = document.getElementById(id);
+        el.addEventListener('touchstart', (e)=>{e.preventDefault(); down()}, {passive:false});
+        el.addEventListener('touchend', (e)=>{e.preventDefault(); up()});
+        el.addEventListener('mousedown', down); el.addEventListener('mouseup', up);
+    };
+    addTouch('btn-left', ()=>keyLeft=true, ()=>keyLeft=false);
+    addTouch('btn-right', ()=>keyRight=true, ()=>keyRight=false);
+    addTouch('btn-accel', ()=>keyFaster=true, ()=>keyFaster=false);
+
+</script>
+</body>
+</html>
